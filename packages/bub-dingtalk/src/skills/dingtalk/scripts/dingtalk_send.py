@@ -14,6 +14,7 @@ Send text/markdown messages to DingTalk groups or users via Robot API.
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -21,6 +22,16 @@ import requests
 
 OPENAPI_BASE = "https://api.dingtalk.com"
 TOKEN_URL = f"{OPENAPI_BASE}/v1.0/oauth2/accessToken"
+
+# Detect markdown features: headings, bold/italic, lists, links, code, or multi-line
+_MARKDOWN_RE = re.compile(r"^[#*>-]|[*_`#\[\]]|\n", re.MULTILINE)
+
+
+def _detect_msg_key(content: str, *, msg_key: str | None) -> str:
+    """Choose msg_key: 'sampleText' for plain text, 'sampleMarkdown' for markdown."""
+    if msg_key and msg_key != "auto":
+        return msg_key
+    return "sampleMarkdown" if _MARKDOWN_RE.search(content) else "sampleText"
 
 
 def get_access_token(client_id: str, client_secret: str) -> str:
@@ -45,22 +56,27 @@ def send_message(
     content: str,
     *,
     title: str = "Bub Reply",
-    msg_key: str = "sampleMarkdown",
+    msg_key: str = "auto",
 ) -> dict[str, Any]:
-    """Send a markdown message to DingTalk."""
+    """Send a text or markdown message to DingTalk, auto-detecting format."""
     token = get_access_token(client_id, client_secret)
     headers = {
         "Content-Type": "application/json",
         "x-acs-dingtalk-access-token": token,
     }
-    msg_param = {"text": content, "title": title}
+
+    resolved_key = _detect_msg_key(content, msg_key=msg_key)
+    if resolved_key == "sampleMarkdown":
+        msg_param = {"text": content, "title": title}
+    else:
+        msg_param = {"content": content}
 
     if chat_id.startswith("group:"):
         url = f"{OPENAPI_BASE}/v1.0/robot/groupMessages/send"
         payload = {
             "robotCode": client_id,
             "openConversationId": chat_id[6:],
-            "msgKey": msg_key,
+            "msgKey": resolved_key,
             "msgParam": json.dumps(msg_param, ensure_ascii=False),
         }
     else:
@@ -68,7 +84,7 @@ def send_message(
         payload = {
             "robotCode": client_id,
             "userIds": [chat_id],
-            "msgKey": msg_key,
+            "msgKey": resolved_key,
             "msgParam": json.dumps(msg_param, ensure_ascii=False),
         }
 
